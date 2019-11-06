@@ -320,7 +320,7 @@ with correct either resolving to 0 or 1.
 for(i in time_pts){
   for(j in 1:length(scales)){
     for(k in items_start[j]:items_end[j]){
-      eval(parse(text=paste0("quop_use$t",i,"_cisrt",k,"<- quop_use$t",i,"_rc",k,"*(1-(quop_use$t",i,"_gc",k,"/",scales[j],"_ub))*100")))
+      eval(parse(text=paste0("quop_use$t",i,"_cisrt",k,"<- quop_use$t",i,"_rc",k,"*(1-((quop_use$t",i,"_gc",k,"-",scales[j],"_lb)/(",scales[j],"_ub-",scales[j],"_lb)))*100")))
     }
   }
 }
