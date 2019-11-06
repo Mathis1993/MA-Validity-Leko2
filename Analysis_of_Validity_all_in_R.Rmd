@@ -1,0 +1,1366 @@
+---
+title: "Analysis of Validity"
+output:
+  html_document:
+    df_print: paged
+---
+
+#0. Preparations
+
+Conveniently install/load necessary packages.
+
+```{r package management, warning = FALSE, message = FALSE}
+ipak <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) 
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
+packages <- c("haven", "chron", "lubridate", "psych", "cNORM", "formattable", "lavaan", "plyr", "dplyr")
+ipak(packages)
+```
+
+#1. Read Data
+
+SPSS data file containing quop data for 2nd-graders for 8 testing points (one school year), n=1994 subjects and pre and post (beginning and end of school year) standardized paper-pencil test data as well as teacher judgments of reading capabilities pre for a subsample of n=**?** subjects.
+
+Data overview:
+
+* Quop t1-t8 (whole school year)
+
+* Standardized Tests (pre and post, beginning and end of school year)
+    + CFT (Intelligence) Pre
+    + DEMAT (Mathematics) Pre
+    + ELFE (Reading) Pre and Post
+    
+* Teacher Judgments of Reading Capability (rating and criterial judgment) Pre
+
+The raw quop scores, teacher judgments and standardized test scores, as given in the file
+
+[04_Open Science Rohdatensatz_1516_Rohwerte.sav](./Daten/04_Open Science Rohdatensatz_1516_Rohwerte.sav)
+
+were preprocessed (cleaning of the data and scale formation for the standardized test scores) in SPSS using the syntax given in the file 
+
+[01_Skalenbildung und Datenbereinigung.sps](./Daten/01_Skalenbildung und Datenbereinigung.sps).  
+
+The output of this process was saved in the file 
+
+[05_Open Science Rohdatensatz_1516_Skalenbildung und Datenbereinigung.sav](./Daten/05_Open Science Rohdatensatz_1516_Skalenbildung und Datenbereinigung.sav). 
+
+This file is now read into R.
+
+(The read-in data is returned as a tibble by read_sav, so indexing works a bit differently leading to [problems](https://www.r-bloggers.com/the-trouble-with-tibbles/) down the path. Therefore transform the data into a regular dataframe.)
+
+```{r read data, warning = FALSE, message = FALSE}
+#read data from SPSS format with haven-package
+data = read_sav("Daten/05_Open Science Rohdatensatz_1516_Skalenbildung und Datenbereinigung.sav")
+#transform in regular dataframe (read_sav returns a tibble)
+data <- as.data.frame(data)
+```
+
+#2. Set Parameters
+
+Define some parameters that are needed for data processing, such as how many items does a quop test consist of.
+
+```{r parameters, warning = FALSE, message = FALSE}
+#parameters for preprocessing
+n_items <- 46
+grade_check <- 2
+age_check_lb <- 6
+age_check_ub <- 12
+time_pts <- c(1:8)
+
+#word, sentence and text scale
+scales <- c("w", "s", "t")
+#quop items
+items <- list(1:20, 21:33, 34:46)
+#quop items separated into the three scales like this (g-variables)
+items_start <- c(1, 21, 34)
+items_end <- c(20, 33, 46)
+#quop pages (1 item per page with instruction pages in between) separated into three scales like this (excluding instruction pages)
+pages_start = c(2, 23, 37)
+pages_end = c(21, 35, 49)
+#amount of items per scale
+n_items_scale <- c(20, 13, 13)
+
+#measures: accuracy and cisrt
+msrs <- c("rcp","cisrt")
+```
+
+#3. Preprocess Quop Data
+
+The quop data is preprocessed according to quop norm formation.
+
+Eventually, we compute a reading efficiency measure called **CISRT** specifying the time that is left for solving an item in percent (if the item is sovled incorrectly, the cisrt is 0). How much time there is for solving an item is set via empirically calculated quntile-based cutoffs. 
+
+##3.1 Data Exclusion on subject level
+
+Exclusion criteria are coded in a new variable specifying eg subjects being outside of age borders.
+
+The single steps are:
+
+1. Compute exclusion variable to document data selection
+
+```{r exclusion variable, warning = FALSE, message = FALSE}
+data$exclusion <- 0
+```
+
+2. Code sujects who changed school or class during the school year or are mistankely listed here although being in the wrong grade or an international/test school.
+
+```{r code school change, warning = FALSE, message = FALSE}
+# Exclude data from students who changed class or school during the school year
+data$exclusion[data$change>0] <- 1
+# exclude testing data
+data$exclusion[data$state=="Testschulen"]<-2
+# exclude international schools
+data$exclusion[data$state=="International"]<-3
+# exclude data from other than second grade
+data$exclusion[data$grade!=grade_check]<-4
+```
+
+3. Prepare time variables (age and testing points)
+
+```{r prepare time variables, warning = FALSE, message = FALSE}
+#Make sure birth dates are in character format, then transform into dates saved in new variable
+data$s_birth <- as.character(data$s_birth)
+data$s_birth_date <- as.Date(data$s_birth, format = "%Y-%m-%d")
+
+#Split testing date variables into date and time variables
+
+#Get testing dates for each timepoint (t1 - t8)
+for(i in time_pts){
+  #read from spss format, the dates are already represented as dates and not as strings, but to be able to
+  #use the string-split logic further down, we make them to strings
+  eval(parse(text=paste0("data$t",i,"_date <- as.character(data$t",i,"_date)")))
+  eval(parse(text=paste0("data$t",i,"_date_v <- as.Date(sapply(data$t",i,"_date,function(x)unlist(strsplit(x,\" \"
+  ))[1]),format = \"%Y-%m-%d\")")))
+}
+
+#Get testing time for each time point
+for(i in time_pts){
+  eval(parse(text=paste0("data$t",i,"_time <- sapply(sapply(data$t",i,"_date,function(x)ifelse(is.na(x),NA,unlist
+                         (strsplit(x,\" \"))[2])),function(x)ifelse(is.na(x),NA,ifelse(nchar(x)==8,chron(times=x
+                         ,format = \"h:m:s\"),chron(times=paste0(x,\":00\"),format = \"h:m:s\"))))")))
+}
+```
+
+4. Code subject age
+
+```{r code subject age, warning = FALSE, message = FALSE}
+#calculate age at first timepoint of testing
+data$s_age <- time_length(interval(data$s_birth_date,data$t1_date_v),"years")
+#exclude data when younger than 6
+data$exclusion[data$s_age<age_check_lb] <- 5
+#exclude data when older than 12
+data$exclusion[data$s_age>age_check_ub] <- 6
+```
+
+5. Code subjects having missed all tests
+
+```{r subjects missing all tests, warning = FALSE, message = FALSE}
+#exclude if all test items are missing
+data$exclusion[apply(data[,paste0("t",rep(1:8,each=n_items),"_r",1:n_items)],1,function(x)all(is.na(x)))] <- 7
+```
+
+6. Identify duplicate cases
+
+```{r duplicate cases, warning = FALSE, message = FALSE}
+#identify duplicate cases
+dup_cases <- aggregate(year~code,data,length)
+#which cases were duplicates?
+dup_students <- dup_cases$code[dup_cases$year>1]
+#exclude duplicate cases
+data$exclusion[data$code%in%dup_students] <- 8
+```
+
+7. Apply exclusion criteria
+    + School/class changing subjects are kept
+
+```{r apply exclusion, warning = FALSE, message = FALSE}
+### take the data that can be used
+quop_use <- data[data$exclusion<2,]
+```
+
+##3.2 Data Exclusion on Testing Point Level
+
+Single tests are coded as NA when they were completed outside normal school hours (07:45:00 to 13:30:00).
+
+```{r testing time, warning = FALSE, message = FALSE}
+for(i in time_pts){
+  eval(parse(text=paste0("tm_t",i," <- !is.na(quop_use$t",i,"_time)&(quop_use$t",i,"_time<chron(times=\"07:45:00\",format=\"h:m:s\")|quop_use$t",i,"_time>chron(times=\"13:30:00\",format=\"h:m:s\"))")))
+  eval(parse(text=paste0("quop_use[tm_t",i,",grep(\"^t",i,"\",names(quop_use),val=T)]<-NA")))
+}
+```
+
+##3.3 Make Sure Relevant Variables are Numeric
+
+Recode all relevant variables into numeric ones.
+
+```{r recode numeric, warning = FALSE, message = FALSE}
+num_vars<-grep("\\_r[[:digit:]]|\\_g[[:digit:]]|\\_ga[[:digit:]]",names(quop_use),val=T)
+for(i in num_vars){
+  eval(parse(text=paste0("quop_use$",i,"<- as.numeric(quop_use$",i,")")))
+}
+```
+
+#4. Cutoffs for Solving Time
+
+##4.1 Prepare Cutoff-Variables
+
+For each item in a quop test the following variables are logged:
+
+* r-variables:response accuracy: 1 if item was solved correctly, 0 if item was solved inocorrectly (t1_r2 for first test, second item)
+
+* g-variables: response latency to an item in ms (t1_g2 for first test, second item)
+
+* ga-variables: response latency for a completing a full page in the webbrowser (t1_ga2 for first test, second page)
+    + In the second grade, each item is presented on an own page, so the information inside g- and ga-variables is the same (except that the indices are not due to instruction pages in between the items)
+    
+Cutoff calculation:
+
+1. Copy g-variables into new ones called gqc to preserve the original values
+2. Where there are negative values (logging problems) in the gqc-variables (so g- so item-latencies), use the corresponding ga-variable (so page-latency) instead
+3. Code all cases still holding negative values NA
+
+```{r prepare cutoff-variables, warning = FALSE, message = FALSE}
+#copy g-variables over to new gqc-variables to be used for calculating quantile-based cutoffs
+for(i in time_pts){
+  for(j in 1:n_items){
+    eval(parse(text=paste0("quop_use$t",i,"_gqc",j,"<- quop_use$t",i,"_g",j)))
+  }
+}
+
+#where there are negative times recorded in the gqc-variables, use the corresponding ga-variable value instead
+#(hoping it is not negatuve) (!: ga also contains instruction pages)
+#first and last item (one per page) between the instruction pages
+for(i in time_pts){
+  for(j in 1:length(pages_start)){
+    for(k in pages_start[j]:pages_end[j]){
+      eval(parse(text=paste0("quop_use$t",i,"_gqc",k-j,"<- ifelse(quop_use$t",i,"_gqc",k-j,"<=0,quop_use$t",i,"_ga",k,", quop_use$t",i,"_gqc",k-j,")")))
+    }
+  }
+}
+
+#now set all cases that still have negative values to NA
+for(i in time_pts){
+  #8 instruction pages
+  for(j in 1:(n_items)){
+    eval(parse(text=paste0("quop_use$t",i,"_gqc",j,"<- ifelse(quop_use$t",i,"_gqc",j,"<=0,NA,quop_use$t",i,"_gqc",j,")")))
+  }
+}
+```
+
+##4.2 Calculate Cutoffs
+
+The 5%- and 95%-latency-quantiles (averaged over all items per scale) are used to determine lower and upper bounds for response time.
+
+```{r calcualte cutoffs, warning = FALSE, message = FALSE}
+#word
+#average .05 quantile over all items
+w_lb <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[1]),"_gqc",items_start[1]:items_end[1])],2,quantile,na.rm=T,p=.05))
+#average .95 quantile over all items
+w_ub <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[1]),"_gqc",items_start[1]:items_end[1])],2,quantile,na.rm=T,p=.95))
+
+#sentence
+#average .05 quantile over all items
+s_lb <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[2]),"_gqc",items_start[2]:items_end[2])],2,quantile,na.rm=T,p=.05))
+#average .95 quantile over all items
+s_ub <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[2]),"_gqc",items_start[2]:items_end[2])],2,quantile,na.rm=T,p=.95))
+
+#text
+#average .05 quantile over all items
+t_lb <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[3]),"_gqc",items_start[3]:items_end[3])],2,quantile,na.rm=T,p=.05))
+#average .95 quantile over all items
+t_ub <- mean(apply(quop_use[,paste0("t",rep(time_pts,each=n_items_scale[3]),"_gqc",items_start[3]:items_end[3])],2,quantile,na.rm=T,p=.95))
+```
+
+Permitted response times (s) are:
+
+* Word scale: `r round(w_lb/1000,2)` - `r round(w_ub/1000,2)` 
+
+* Sentence scale: `r round(s_lb/1000,2)` - `r round(s_ub/1000,2)` 
+
+* Text scale: `r round(t_lb/1000,2)` - `r round(t_ub/1000,2)` 
+
+
+##4.3 Apply Cutoffs
+
+Create corrected latency variables (coded as NA outside of the cutoff range) and code accuracy variables as NA when latency was outside of the curoff range.
+
+```{r apply cutoffs, warning = FALSE, message = FALSE}
+#create corrected g variables (coded as NA outside the range)
+for(i in time_pts){
+  for(j in 1:length(scales)){
+    for(k in items_start[j]:items_end[j]){
+      eval(parse(text=paste0("quop_use$t",i,"_gc",k,"<- ifelse(quop_use$t",i,"_gqc",k,"<",scales[j],"_lb|quop_use$t",i,"_gqc",k,">",scales[j],"_ub,NA,quop_use$t",i,"_gqc",k,")")))
+    }
+  }
+}
+
+#create corrected r variables (coded as NA when corrected response time is NA)
+for(i in time_pts){
+  for(j in 1:n_items){
+    eval(parse(text=paste0("quop_use$t",i,"_rc",j,"<- ifelse(is.na(quop_use$t",i,"_gc",j,"),NA,quop_use$t",i,"_r",j,")")))
+  }
+}
+```
+
+#5. Efficiency Measure CISRT
+
+**CISRT** = Correct Item Summed Residual Time refering to the time left for solving an item in percent(0 if the item is answered incorrectly).
+
+Calculation formula: 
+
+$\mathbf{CISRT} = correct * (1 - \frac{latency}{bound_{upper}}) * 100)$ 
+
+with correct either resolving to 0 or 1.
+
+```{r calculate cisrt, warning = FALSE, message = FALSE}
+#calculate correct item summed residual time (cisrt)
+for(i in time_pts){
+  for(j in 1:length(scales)){
+    for(k in items_start[j]:items_end[j]){
+      eval(parse(text=paste0("quop_use$t",i,"_cisrt",k,"<- quop_use$t",i,"_rc",k,"*(1-(quop_use$t",i,"_gc",k,"/",scales[j],"_ub))*100")))
+    }
+  }
+}
+```
+
+#6. Overall Scores
+
+Now that we have an efficiency measure per item, we can create overall scores per scale.
+
+First, create an accuracy variable not holding 1s and 0s but 100s and 0s in order to stay with the percent scale when calculating overall scores.
+
+Next, calculate average accuracy (amount of correctly solved items) and effiency (CISRT) for each subject for each testing point for each scale with item-median imputation in case of missings. 
+
+```{r overall scores, warning = FALSE, message = FALSE}
+#rc-variables times 100 as we use averages in the Scoring-procedure and want to finally have percent
+for(i in time_pts){
+  for(j in 1:n_items){
+    eval(parse(text=paste0("quop_use$t",i,"_rcp",j,"<-quop_use$t",i,"_rc",j,"*100")))
+  }
+}
+
+#Merging into quop_use
+for(g in 1:length(scales)){
+  
+  for(h in 1:length(msrs)){
+    
+    ### create data frames holding only set items
+    for(i in time_pts){
+      eval(parse(text=paste0(scales[g],"_",msrs[h],"_t",i," <- quop_use[,\"code\"]")))
+      eval(parse(text=paste0(scales[g],"_",msrs[h],"_t",i," <- as.data.frame(",scales[g],"_",msrs[h],"_t",i,")")))
+      eval(parse(text=paste0("names(",scales[g],"_",msrs[h],"_t",i,")[1] <- \"code\"")))
+      for(j in items[[g]]){
+        ### only items from current scale
+        eval(parse(text=paste0(scales[g],"_",msrs[h],"_t",i,"$t",i,"_",msrs[h],j," <- quop_use[,\"t",i,"_",msrs[h],j,"\"]")))
+      }
+    }
+    
+    for(i in time_pts){
+      ### exclude rows with only missings
+      eval(parse(text=paste0(scales[g],"_",msrs[h],"_t",i," <- ",scales[g],"_",msrs[h],"_t",i,"[apply(",scales[g],"_",msrs[h],"_t",i,"[,-1],1,function(x)!all(is.na(x))),]")))
+      
+      ### average sum score with item-median imputation in case of missings
+      eval(parse(text=paste0(scales[g],"_",msrs[h],"_t",i,"$raw <- scoreItems(rep(",1,",",length(items[[g]]),"),",scales[g],"_",msrs[h],"_t",i,"[,-1],totals=F)$scores")))
+      
+      ### merge score with quop_use dataframe
+      eval(parse(text=paste0("names(",scales[g],"_",msrs[h],"_t",i,")[length(",scales[g],"_",msrs[h],"_t",i,")] <- \"",scales[g],"_",msrs[h],"_t",i,"\"")))
+      eval(parse(text=paste0("quop_use <- merge(quop_use, ",scales[g],"_",msrs[h],"_t",i,"[c(\"code\",\"",scales[g],"_",msrs[h],"_t",i,"\")], by=\"code\", all=T)")))
+      #eval(parse(text=paste0("quop_use$",scales[g],"_",msrs[h],"_t",i," <- ",scales[g],"_",msrs[h],"_t",i,"$raw")))
+    }
+  }
+}
+```
+
+
+#7. Extract Standardized Test Scores and Teacher Judgments
+
+This only includes the subsample having completed the standardized tests and being judged by their teachers.
+We extract this data and merge it with the quop test data from this subsample.
+
+```{r extract subsample, warning = FALSE, message = FALSE}
+elfe <- data.frame(quop_use$code, quop_use$class, quop_use$wort_rw, quop_use$wort_pr, quop_use$satz_rw, quop_use$satz_pr, quop_use$text_rw, quop_use$text_pr, quop_use$wort_rw_2, quop_use$wort_pr_2, quop_use$satz_rw_2, quop_use$satz_pr_2, quop_use$text_rw_2, quop_use$text_pr_2, quop_use$demat_rw, quop_use$demat_pr, quop_use$cft_rw, quop_use$In_wort, quop_use$In_satz, quop_use$In_text, quop_use$Di_wort, quop_use$Di_satz, quop_use$Di_text)
+names(elfe) <- c("code", "class", "w_rw_pre", "w_pr_pre", "s_rw_pre", "s_pr_pre", "t_rw_pre", "t_pr_pre", "w_rw_post", "w_pr_post", "s_rw_post", "s_pr_post", "t_rw_post", "t_pr_post", "demat_rw", "deamt_pr", "cft_rw", "tr_in_w", "tr_in_s", "tr_in_t", "tr_di_w", "tr_di_s", "tr_di_t")
+
+#delete all cases that only have NAs (quop-users that didn't take the paper-pencil elfe tests)
+elfe <- elfe[apply(elfe[,-c(1:2)],1,function(x)!all(is.na(x))),]
+
+elfe_quop <- merge(quop_use[c("code","class",colnames(quop_use)[grep("(^w_|^s_|^t_)(rcp|cisrt)", colnames(quop_use))])], elfe, by=c("code","class"))
+```
+
+Now, we have one dataset with the quop data for all sujects, and one dataset with the quop data, standardized test data and teacher judgments for the subsample. 
+
+#8. Guessing Correction
+
+**???**
+
+```{r guessing correction, warning = FALSE, message = FALSE}
+#elfe_quop$w_cisrt_t1 <- ifelse(elfe_quop$w_rcp_t1<=50, NA, elfe_quop$w_cisrt_t1)
+#elfe_quop$s_cisrt_t1 <- ifelse(elfe_quop$s_rcp_t1<=50, NA, elfe_quop$s_cisrt_t1)
+#elfe_quop$t_cisrt_t1 <- ifelse(elfe_quop$t_rcp_t1<=50, NA, elfe_quop$t_cisrt_t1)
+```
+
+#9. Reliability of the Quop Tests
+
+**Retest-Reliability** of sucessive tests per scale.
+
+```{r retest reliability, warning = FALSE, message = FALSE}
+retest_idx <- function(test_points){
+  #minus one time due to 1-based indexing
+  idx <- 2+test_points*(length(time_pts)+1) - 1*(length(time_pts)+1)
+  return(idx)
+}
+
+#word
+retest_w <- cor(quop_use[,which(colnames(quop_use)=="w_cisrt_t1"):which(colnames(quop_use)=="w_cisrt_t8")],use="complete.obs")
+retest_rel_w <- retest_w[retest_idx(1:7)]
+
+#sentence
+retest_s <- cor(quop_use[,which(colnames(quop_use)=="s_cisrt_t1"):which(colnames(quop_use)=="s_cisrt_t8")],use="complete.obs")
+retest_rel_s <- retest_s[retest_idx(1:7)]
+
+#text
+retest_t <- cor(quop_use[,which(colnames(quop_use)=="s_cisrt_t1"):which(colnames(quop_use)=="s_cisrt_t8")],use="complete.obs")
+retest_rel_t <- retest_t[retest_idx(1:7)]
+
+#into one df
+retest_rel <- as.data.frame(t(data.frame(w=retest_rel_w, s=retest_rel_s, t=retest_rel_t)))
+names(retest_rel) <- c(paste0("t",seq(1,7),"_t",seq(2,8)))
+
+#format as table
+retest_rel <- round(retest_rel,2)
+(retest_rel_f <- formattable(retest_rel))
+```
+
+**Split-Half Reliability** (odd-even) of all tests per scale. 
+
+```{r split-half reliability, warning = FALSE, message = FALSE}
+split_half_rel <- data.frame(test=c(1:8))
+
+scales <- c("w","s","t")
+time_pts <- c(1:8)
+items_start <- c(1, 21, 34)
+items_end <- c(20, 33, 46)
+for(h in 1:length(scales)){
+  
+  cors <- 0
+  
+  for (i in time_pts){
+    
+    eval(parse(text=paste0("cors <- append(cors, cor(apply(quop_use[paste0(\"t",i,"_cisrt\",seq(",items_start[h],",",items_end[h],",by=2))],1,sum,na.rm=T), apply(quop_use[paste0(\"t",i,"_cisrt\",seq(",items_start[h]+1,",",items_end[h],",by=2))],1,sum,na.rm=T), use=\"complete.obs\"))")))
+  }
+  cors <- cors[-1]
+  eval(parse(text=paste0("split_half_rel$",scales[h]," <- cors")))
+}
+
+#format as table
+split_half_rel <- round(split_half_rel[-1],2)
+row.names(split_half_rel) <- c(paste0("t",seq(1,8)))
+(split_half_rel_f <- formattable(split_half_rel))
+```
+
+#10. Validity Analyses
+
+We have three research questions:
+
+1. Status Validity: Does one test score at a given point of time reflect the current level of the targeted competence?
+    + Factorial Validity
+    + Discriminant, Convergent and Criterial Validity
+2. Validity of Change Measurement: Does the change in test scores over time reflect the change in the targeted competence?
+3. Predictive Validity: Is the change in test scores over time predictive of the final level of the targeted competence beyond a baseline performance (In other words: Are we gaining information by measuring the targeted competence multiple times (thereby estimating change) as opposed to measuring the targeted competence only once?)?
+
+##10.1 Status Validity
+
+###10.1.1 Factorial Validity
+
+Confirmatory Factory Analyses (CFAs) for each testing point to verify the assumed model structure. We assume that the item scores for each scale capture an individual latent variable (although the three latent variables representing word, sentence and text scale are intercorrelated). The CFAs are estimated with three item parcels per scale. The parcels are built by counterbalancing item positions. This means that for each scale, the first item goes into the first parcel, the second item goes into the second parcel, the third item into the third parcel, the fourth item again into the first parcel and so on:
+
+Build parcels by dividing each scale into three groups.
+
+* Group 1: 1., 4., 7., ... item
+
+* Group 2: 2., 5., 8., ... item
+
+* Group 3: 3., 6., 9., ... item
+
+```{r quop parcels, warning = FALSE, message = FALSE}
+quop_parcels <- quop_use[,c("code","class")]
+#For each scale, for each testing ponit
+
+#CREATING DF QUOP_PARCELS
+#WITHOUT SCALE()
+for(h in 1:length(scales)){
+  
+  for(i in time_pts){
+    #first parcel
+    eval(parse(text=paste0("quop_parcels$",scales[h],"_t",i,"_parcel1 <- ifelse(
+                           apply(quop_use[,paste0(\"t",i,"_cisrt\",",items_start[h],":",items_end[h],")],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowMeans(quop_use[,paste0(\"t",i,"_cisrt\",seq(",items_start[h],",",items_end[h],",by=3))],na.rm=T))")))
+    #second parcel
+    eval(parse(text=paste0("quop_parcels$",scales[h],"_t",i,"_parcel2 <- ifelse(
+                           apply(quop_use[,paste0(\"t",i,"_cisrt\",",items_start[h],":",items_end[h],")],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowMeans(quop_use[,paste0(\"t",i,"_cisrt\",seq(",items_start[h]+1,",",items_end[h],",by=3))],na.rm=T))")))
+    #third parcel
+    eval(parse(text=paste0("quop_parcels$",scales[h],"_t",i,"_parcel3 <- ifelse(
+                           apply(quop_use[,paste0(\"t",i,"_cisrt\",",items_start[h],":",items_end[h],")],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowMeans(quop_use[,paste0(\"t",i,"_cisrt\",seq(",items_start[h]+2,",",items_end[h],",by=3))],na.rm=T))")))
+  }
+}
+
+#Make NaNs to NA (Where are they coming from???)
+#is.nan() behaves differently than is.na() for dataframes but for a matrix, it works just like is.na() does for dataframes
+quop_parcels[is.nan(as.matrix(quop_parcels))] <- NA
+```
+
+The parcels are merged into our two dataframes (quop scores for the whole sample and quop scores as well as standardized test scores and teacher judgments for the subsample).
+
+```{r merge quop parcels, warning = FALSE, message = FALSE}
+#Add quop parcels to quop_use and to elfe_quop
+quop_use <- merge(quop_use, quop_parcels, by=c("code","class"))
+elfe_quop <- merge(elfe_quop, quop_parcels, by=c("code","class"))
+```
+
+And CFAs are estimated, reporting the two most common abosulte and incremental fit indices, respectively.
+
+**ADD PICTURE OF ASSUMED MODEL STRUCTURE**
+
+```{r CFAs, warning = FALSE, message = FALSE}
+#CFA for eacht testing point
+#empty df (df has typed columns, so each column's type needs to be declared)
+fit_msrs <- data.frame(RMSEA=double(),SRMR=double(),CFI=double(),TLI=double())
+#rbind messes with column names so save them and reassign them later
+names_fit_msrs <- names(fit_msrs)
+
+tests <- c(1:8)
+for(i in tests){
+  eval(parse(text=paste0("quop_model <- \"w =~ w_t",i,"_parcel1 + w_t",i,"_parcel2 + w_t",i,"_parcel3
+                         s =~ s_t",i,"_parcel1 + s_t",i,"_parcel2 + s_t",i,"_parcel3
+                         t =~ t_t",i,"_parcel1 + t_t",i,"_parcel2 + t_t",i,"_parcel3\"")))
+  fit <- cfa(quop_model, data=quop_use)
+  #summary(fit, fit.measures=T, standardized=T)
+  
+  #Store fit indices
+  fit_msrs <- rbind(fit_msrs, as.vector(fitMeasures(fit)[c("rmsea", "srmr","cfi", "tli")]))
+  #make sure the colnames are correct
+  names(fit_msrs) <- names_fit_msrs
+}
+
+#add column to identify testing points
+fit_msrs <- cbind(data.frame(testing_point=c(1:8)), fit_msrs)
+#best values for absolute fit indices (the smaller the better) and incremental fit indices (the bigger the better)
+best <- c(apply(fit_msrs[,c(2,3)],2,min), apply(fit_msrs[,c(4,5)],2,max))
+#worst values
+worst <- c(apply(fit_msrs[,c(2,3)],2,max), apply(fit_msrs[,c(4,5)],2,min))
+#put them together
+range_fit_indices <- rbind(worst,best)
+#round
+range_fit_indices <- round(range_fit_indices,3)
+#nice table
+(range_fit_indices_f <- formattable(as.data.frame(range_fit_indices)))
+```
+
+###10.1.2 Discrimant Status Validity
+
+Indicator: Correlation of overall quop scores t1 with demat (mathematics) and cft (intelligence) standardized test scores.
+
+```{r discriminant status validity, warning = FALSE, message = FALSE}
+# - total quop score t1 with cft
+total_cisrt_t1 <- apply(elfe_quop[,c("w_cisrt_t1", "s_cisrt_t1", "t_cisrt_t1")], 1, mean)
+q_cft <- cor(elfe_quop$cft_rw, total_cisrt_t1, use="complete.obs")
+
+# - total quop score t1 with demat
+q_demat <- cor(elfe_quop$demat_rw, total_cisrt_t1, use="complete.obs")
+
+#into df
+divergent <- data.frame(LPA=c("Total Score"), Intelligence=c(q_cft), Mathematics=c(q_demat))
+divergent$Intelligence <- round(divergent$Intelligence,2)
+divergent$Mathematics <- round(divergent$Mathematics,2)
+
+#format as table
+(divergent_f <- formattable(divergent))
+```
+
+Correlation of overall quop scores of all time points with demat (mathematics) and cft (intelligence) standardized test scores.
+
+```{r discriminant status validity all time points, warning = FALSE, message = FALSE}
+#calcualte total score and correlation with discriminant measure for one timepoint
+discr_validity <- function(df=elfe_quop, score1=quop_score, score2="cft_rw"){
+  total_scores <- apply(df[,score1], 1, mean)
+  return(cor(total_scores, df[,score2], use="complete.obs"))
+}
+
+#variable names for total quop scores per time point
+quop_scores <- list()
+for(i in time_pts){
+  quop_scores[[i]] <- c(paste0("w_cisrt_t",i), paste0("s_cisrt_t",i),paste0("t_cisrt_t",i))
+}
+
+#over all timepoints (first 8 results are cft, second 8 are demat)
+discr_cors <- mapply(function(score1, score2)discr_validity(score1=score1, score2=score2), score1=quop_scores, score2=rep(c("cft_rw", "demat_rw"),each=8))
+
+#into df
+discriminant <- data.frame(Intelligence=round(discr_cors[1:8],2), Mathematics=round(discr_cors[9:16],2))
+row.names(discriminant) <- c(paste0("t",seq(1,8)))
+
+#format as table
+(discriminant_f <- formattable(discriminant))
+```
+
+* Median correlation of overall quop scores with **CFT (Intelligence)**: **`r median(discriminant$Intelligence)`**
+* Range of correlations: **`r range(discriminant$Intelligence)`**
+
+* Median correlation of overall quop scores with **DEMAT (MATHEMATICS)**: **`r median(discriminant$Mathematics)`**
+* Range of correlations: **`r range(discriminant$Mathematics)`**
+
+####10.1.2.1 Attenuated Discriminant Status Validity
+
+**ECHTE DEMAT/CFT REL. EINFÜGEN**
+
+```{r attenuated discriminant status validity, warning = FALSE, message = FALSE}
+#split-half reliability of total quop scores
+quop_items_t1 <- quop_use[,grep("t1_cisrt", colnames(quop_use))]
+sh_total_t1 <- cor(apply(quop_items_t1[,seq(1,n_items,by=2)],1,sum,na.rm=T), apply(quop_items_t1[,seq(2,n_items,by=2)],1,sum,na.rm=T), use="complete.obs")
+
+#reliability of cft and demat
+rel_cft <- 0.9
+rel_demat <- 0.9
+
+#attenuated discriminant status validities
+q_cft_a <- (cor(elfe_quop$cft_rw, total_cisrt_t1, use="complete.obs")) / (sqrt(rel_cft) * sqrt(sh_total_t1))
+
+# - total quop score t1 with demat
+q_demat_a <- (cor(elfe_quop$demat_rw, total_cisrt_t1, use="complete.obs")) / (sqrt(rel_demat) * sqrt(sh_total_t1))
+
+#into df
+divergent_a <- data.frame(LPA=c("Total Score"), Intelligence=c(q_cft_a), Mathematics=c(q_demat_a))
+divergent_a$Intelligence <- round(divergent_a$Intelligence,2)
+divergent_a$Mathematics <- round(divergent_a$Mathematics,2)
+
+#format as table
+(divergent_attenuated_f <- formattable(divergent_a))
+```
+
+
+###10.1.3 Convergent Status Validity
+
+Indicator: Correlation of quop scores per scale with elfe (reading) scores per scale.
+
+First, check intercorrelations of quop and elfe scales
+
+```{r intercorrelations, warning = FALSE, message = FALSE}
+#Check intercorrelations of elfe and quop subscales
+subscales <- data.frame(w_quop=elfe_quop$w_cisrt_t1, s_quop=elfe_quop$s_cisrt_t1, t_quop=elfe_quop$t_cisrt_t1,
+                        w_elfe=elfe_quop$w_rw_pre, s_elfe=elfe_quop$s_rw_pre, t_elfe=elfe_quop$t_rw_pre)
+intercor <- cor(subscales, use="complete.obs")
+```
+
+Then, calculate correlations.
+
+```{r convergent status validity, warning = FALSE, message = FALSE}
+# -quop score t1 word scale with elfe1
+w_1_e <- cor(elfe_quop$w_rw_pre, elfe_quop$w_cisrt_t1, use="complete.obs")
+
+# -quop score t8 word scale with elfe2
+w_8_e <- cor(elfe_quop$w_rw_post, elfe_quop$w_cisrt_t8, use="complete.obs")
+
+# -quop score t1 sentence scale with elfe1
+s_1_e <- cor(elfe_quop$s_rw_pre, elfe_quop$s_cisrt_t1, use="complete.obs")
+
+# -quop score t8 sentence scale with elfe2
+s_8_e <- cor(elfe_quop$s_rw_post, elfe_quop$s_cisrt_t8, use="complete.obs")
+
+# -quop score t1 text scale with elfe1
+t_1_e <- cor(elfe_quop$t_rw_pre, elfe_quop$t_cisrt_t1, use="complete.obs")
+
+# -quop score t8 text sale with elfe2
+t_8_e <- cor(elfe_quop$t_rw_post, elfe_quop$t_cisrt_t8, use="complete.obs")
+
+#into df
+convergent <- data.frame(LPA=c("Word", "Sentence", "Text"), ELFE_Pre=c(w_1_e, s_1_e, t_1_e), ELFE_Post=c(w_8_e, s_8_e, t_8_e))
+convergent$ELFE_Pre <- round(convergent$ELFE_Pre,2)
+convergent$ELFE_Post <- round(convergent$ELFE_Post,2)
+
+#format as table
+(convergent_f <- formattable(convergent))
+```
+
+Correlations with all timepoints (each with ELFE pre and post)
+
+```{r convergent status validity all time points, warning = FALSE, message = FALSE}
+#calcualte total score and correlation with discriminant measure for one timepoint
+conv_validity <- function(df=elfe_quop, score1=rep(paste0("w_cisrt_t",seq(1,8)),2), score2=rep(c("w_rw_pre", "w_rw_post"),each=8)){
+  return(mapply(function(score1, score2)cor(elfe_quop[,score1], elfe_quop[,score2], use="complete.obs"), score1, score2))
+}
+
+#word level
+#first eight are pre, second eight are post
+conv_cors_w <- conv_validity()
+
+#sentence level
+conv_cors_s <- conv_validity(score1=rep(paste0("s_cisrt_t",seq(1,8)),2), score2=rep(c("s_rw_pre", "s_rw_post"),each=8))
+
+#text level
+conv_cors_t <- conv_validity(score1=rep(paste0("t_cisrt_t",seq(1,8)),2), score2=rep(c("t_rw_pre", "t_rw_post"),each=8))
+
+#into dfs
+#word
+convergent_w <- data.frame(ELFE_pre=round(conv_cors_w[1:8],2), ELFE_post=round(conv_cors_w[9:16],2))
+row.names(convergent_w) <- c(paste0("t",seq(1,8)))
+
+#sentence
+convergent_s <- data.frame(ELFE_pre=round(conv_cors_s[1:8],2), ELFE_post=round(conv_cors_s[9:16],2))
+row.names(convergent_s) <- c(paste0("t",seq(1,8)))
+
+#text
+convergent_t <- data.frame(ELFE_pre=round(conv_cors_t[1:8],2), ELFE_post=round(conv_cors_t[9:16],2))
+row.names(convergent_t) <- c(paste0("t",seq(1,8)))
+
+#format as tables
+#word
+(convergent_w_f <- formattable(convergent_w))
+
+#sentence
+(convergent_s_f <- formattable(convergent_s))
+
+#text
+(convergent_t_f <- formattable(convergent_t))
+```
+
+* **Word level**
+  + ELFE_pre
+    + Median Correlation: **`r median(convergent_w$ELFE_pre)`**
+    + Range of correlations: **`r range(convergent_w$ELFE_pre)`**
+  + ELFE_post
+    + Median Correlation: **`r median(convergent_w$ELFE_post)`**
+    + Range of correlations: **`r range(convergent_w$ELFE_post)`**
+* **Sentence level**
+  + ELFE_pre
+    + Median Correlation: **`r median(convergent_s$ELFE_pre)`**
+    + Range of correlations: **`r range(convergent_s$ELFE_pre)`**
+  + ELFE_post
+    + Median Correlation: **`r median(convergent_s$ELFE_post)`**
+    + Range of correlations: **`r range(convergent_s$ELFE_post)`**
+* **Text level**
+  + ELFE_pre
+    + Median Correlation: **`r median(convergent_t$ELFE_pre)`**
+    + Range of correlations: **`r range(convergent_t$ELFE_pre)`**
+  + ELFE_post
+    + Median Correlation: **`r median(convergent_t$ELFE_post)`**
+    + Range of correlations: **`r range(convergent_t$ELFE_post)`**
+
+
+####10.1.3.1 Attenuated Convergent Status Validity
+
+As reliability is not perfect, estimate convergent correlations as they would be when having perfect reliability.
+
+```{r attenuated convergent status validity, warning = FALSE, message = FALSE}
+#Quop split_half reliabilities
+sh_w_t1 <- split_half_rel$w[1]
+sh_w_t8 <- split_half_rel$w[8]
+
+sh_s_t1 <- split_half_rel$s[1]
+sh_s_t8 <- split_half_rel$s[8]
+
+sh_t_t1 <- split_half_rel$t[1]
+sh_t_t8 <- split_half_rel$t[8]
+
+#from elfe manual: split-half reliailities for pencil-paper-version in grade 2 (p. 38)
+sh_w_elfe <- .98
+sh_s_elfe <- .95
+sh_t_elfe <- .87
+
+# -quop score t1 word scale with elfe1
+w_1_a <- cor(elfe_quop$w_rw_pre, elfe_quop$w_cisrt_t1, use="complete.obs") / (sqrt(sh_w_elfe) * sqrt(sh_w_t1))
+
+# -quop score t8 word scale with elfe2
+w_8_a <- cor(elfe_quop$w_rw_post, elfe_quop$w_cisrt_t8, use="complete.obs") / (sqrt(sh_w_elfe) * sqrt(sh_w_t8))
+
+# -quop score t1 sentence scale with elfe1
+s_1_a <- cor(elfe_quop$s_rw_pre, elfe_quop$s_cisrt_t1, use="complete.obs") / (sqrt(sh_s_elfe) * sqrt(sh_s_t1))
+
+# -quop score t8 sentence scale with elfe2
+s_8_a <- cor(elfe_quop$s_rw_post, elfe_quop$s_cisrt_t8, use="complete.obs") / (sqrt(sh_s_elfe) * sqrt(sh_s_t8))
+
+# -quop score t1 text scale with elfe1
+t_1_a <- cor(elfe_quop$t_rw_pre, elfe_quop$t_cisrt_t1, use="complete.obs") / (sqrt(sh_t_elfe) * sqrt(sh_t_t1))
+
+# -quop score t8 text sale with elfe2
+t_8_a <- cor(elfe_quop$t_rw_post, elfe_quop$t_cisrt_t8, use="complete.obs") / (sqrt(sh_t_elfe) * sqrt(sh_t_t8))
+
+#into one df
+convergent_attenuated <- data.frame(LPA=c("Word", "Sentence", "Text"), ELFE_Pre=c(w_1_a, s_1_a, t_1_a), ELFE_Post=c(w_8_a, s_8_a, t_8_a))
+convergent_attenuated$ELFE_Pre <- round(convergent_attenuated$ELFE_Pre,2)
+convergent_attenuated$ELFE_Post <- round(convergent_attenuated$ELFE_Post,2)
+
+#format as table
+(convergent_attenuated_f <- formattable(convergent_attenuated))
+```
+
+###10.1.4 Criterial Status Validity
+
+We have a rating (1-7) and a criterial judgment (how many words can a suject read in 2 min) from a teacher for each subject. The correlation between quop scores for each scale and the ratings/judgments is used as an indicator for criterial validity.
+
+As one teacher evaluates all students of his class, we have nested data. So, we calculate the correlation per class, fisher-z-standardize it, get the mean correlation and transform it back.
+
+```{r criterial status validity, warning = FALSE, message = FALSE}
+# -quop score t1 word scale with teacher rating word scale
+#Note the use of the '.' function to allow class to be used without quoting
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$w_cisrt_t1, x$tr_in_w, use="complete.obs")))
+w_in <- fisherz2r(mean(fisherz(cors$cor)))
+#cor(elfe_quop$w_rw_pre, elfe_quop$tr_w, use="complete.obs")
+
+# -quop score t1 word scale with teacher criterial judgment word
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$w_cisrt_t1, x$tr_di_w, use="complete.obs")))
+w_di <- fisherz2r(mean(fisherz(cors$cor)))
+
+# -quop score t1 sentence scale with teacher rating sentence scale
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$s_cisrt_t1, x$tr_in_s, use="complete.obs")))
+s_in <- fisherz2r(mean(fisherz(cors$cor)))
+#cor(elfe_quop$s_rw_pre, elfe_quop$tr_s, use="complete.obs")
+
+# -quop score t1 sentence scale with teacher criterial judgment sentence
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$s_cisrt_t1, x$tr_di_s, use="complete.obs")))
+s_di <- fisherz2r(mean(fisherz(cors$cor)))
+
+# -quop score t1 text scale with teacher rating text scale
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$t_cisrt_t1, x$tr_in_t, use="complete.obs")))
+t_in <- fisherz2r(mean(fisherz(cors$cor)))
+#cor(elfe_quop$t_rw_pre, elfe_quop$tr_t, use="complete.obs")
+
+# -quop score t1 text scale with teacher criterial judgment text
+cors <- ddply(elfe_quop, .(class), function(x)data.frame(cor=cor(x$t_cisrt_t1, x$tr_di_t, use="complete.obs")))
+t_di <- fisherz2r(mean(fisherz(cors$cor)))
+
+#into df
+criterial <- data.frame(LPA=c("Word", "Sentence", "Text"), Teacher_Rating_Qualitative=c(w_in, s_in, t_in), Teacher_Rating_Quantitative=c(w_di, s_di, t_di))
+criterial$Teacher_Rating_Qualitative <- round(criterial$Teacher_Rating_Qualitative,2)
+criterial$Teacher_Rating_Quantitative <- round(criterial$Teacher_Rating_Quantitative,2)
+
+#format as table
+(criterial_f <- formattable(criterial))
+```
+
+**TMP: Criterial Statuds Validity other Time Points**
+
+```{r tmp: criterial status validity other time points, warning = FALSE, message = FALSE}
+# -quop score t2 word scale with teacher rating word scale
+#Note the use of the '.' function to allow class to be used without quoting
+criterial_validity <- function(df=elfe_quop, group="class", score1="w_cisrt_t1", score2="tr_in_w"){
+  #x are the dataframe subsets generated by ddply
+  #if inside a class, all quop scores are missing, the correlation in this class is set to NA
+  cors <- ddply(df, group, function(x)if(sum(is.na(x[, score1])) == length(x[, score1])){
+    data.frame(cor=NA)}else{
+      data.frame(cor=cor(x[, score1], x[, score2], use="complete.obs"))})
+  return(fisherz2r(mean(fisherz(cors$cor),na.rm=T)))
+}
+
+#word scale
+#first 8 results are the time points correlations with tr_in_w, second 8 results the correlations with tr_di_w
+criter_cors_w <- mapply(function(score1, score2)criterial_validity(elfe_quop, "class", score1=score1, score2=score2), rep(paste0("w_cisrt_t",seq(1,8)),2), rep(c("tr_in_w", "tr_di_w"),each=8))
+
+#sentence scale
+criter_cors_s <- mapply(function(score1, score2)criterial_validity(elfe_quop, "class", score1=score1, score2=score2), rep(paste0("s_cisrt_t",seq(1,8)),2), rep(c("tr_in_s", "tr_di_s"),each=8))
+
+#text scale
+criter_cors_t <- mapply(function(score1, score2)criterial_validity(elfe_quop, "class", score1=score1, score2=score2), rep(paste0("t_cisrt_t",seq(1,8)),2), rep(c("tr_in_t", "tr_di_t"),each=8))
+
+#into dfs
+#word
+criterial_w <- data.frame(Teacher_Rating_Dimensional=round(criter_cors_w[1:8],2), Teacher_Rating_Criterial=round(criter_cors_w[9:16],2))
+row.names(criterial_w) <- c(paste0("t",seq(1,8)))
+
+#sentence
+criterial_s <- data.frame(Teacher_Rating_Dimensional=round(criter_cors_s[1:8],2), Teacher_Rating_Criterial=round(criter_cors_s[9:16],2))
+row.names(criterial_s) <- c(paste0("t",seq(1,8)))
+
+#text
+criterial_t <- data.frame(Teacher_Rating_Dimensional=round(criter_cors_t[1:8],2), Teacher_Rating_Criterial=round(criter_cors_t[9:16],2))
+row.names(criterial_t) <- c(paste0("t",seq(1,8)))
+
+#format as tables
+#word
+(criterial_w_f <- formattable(criterial_w))
+
+#sentence
+(criterial_s_f <- formattable(criterial_s))
+
+#text
+(criterial_t_f <- formattable(criterial_t))
+```
+
+* **Word level**
+  + Teacher Ratings Dimensional
+    + Median Correlation: **`r median(criterial_w$Teacher_Rating_Dimensional)`**
+    + Range of correlations: **`r range(criterial_w$Teacher_Rating_Dimensional)`**
+  + Teacher Ratings Criterial
+    + Median Correlation: **`r median(criterial_w$Teacher_Rating_Criterial)`**
+    + Range of correlations: **`r range(criterial_w$Teacher_Rating_Criterial)`**
+* **Sentence level**
+  + Teacher Ratings Dimensional
+    + Median Correlation: **`r median(criterial_s$Teacher_Rating_Dimensional)`**
+    + Range of correlations: **`r range(criterial_s$Teacher_Rating_Dimensional)`**
+  + Teacher Ratings Criterial
+    + Median Correlation: **`r median(criterial_s$Teacher_Rating_Criterial)`**
+    + Range of correlations: **`r range(criterial_s$Teacher_Rating_Criterial)`**
+* **Text level**
+  + Teacher Ratings Dimensional
+    + Median Correlation: **`r median(criterial_t$Teacher_Rating_Dimensional)`**
+    + Range of correlations: **`r range(criterial_t$Teacher_Rating_Dimensional)`**
+  + Teacher Ratings Criterial
+    + Median Correlation: **`r median(criterial_t$Teacher_Rating_Criterial)`**
+    + Range of correlations: **`r range(criterial_t$Teacher_Rating_Criterial)`**
+    
+    
+##10.2 Validity of Change Measurement
+
+Indicator: Correlation of the slope of a linear growth model estimated over all quop scores (testing points 1 to 8) with the latent difference between elfe pre and post scores of a Latent Change Model.
+
+![Validity of Change Measurement Model](./Bilder/Validity_of_Change_Measurement_Model.jpg)
+First, we build 3 elfe parcels per scale according to the quop parcels.
+
+```{r elfe parcels, warning = FALSE, message = FALSE}
+elfe_parcels <- quop_use[,c("code","class")]
+tests <- c("", "_2")
+scales <- c("Wort", "Satz", "Text")
+new_scales <- c("w", "s", "t")
+items_start <- c(1, 1, 1)
+items_end <- c(75, 36, 26)
+#For each scale, for each testing point
+
+#WITHOUT SCALE()
+for(h in 1:length(scales)){
+  
+  for(i in tests){
+    #first parcel
+    eval(parse(text=paste0("elfe_parcels$",new_scales[h],"_elfe",which(tests==i),"_parcel1 <- ifelse(
+                           apply(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h],",",items_end[h],"),i)],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowSums(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h],",",items_end[h],",by=3),i)],na.rm=T))")))
+    #second parcel
+    eval(parse(text=paste0("elfe_parcels$",new_scales[h],"_elfe",which(tests==i),"_parcel2 <- ifelse(
+                           apply(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h],",",items_end[h],"),i)],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowSums(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h]+1,",",items_end[h],",by=3),i)],na.rm=T))")))
+    #third parcel
+    eval(parse(text=paste0("elfe_parcels$",new_scales[h],"_elfe",which(tests==i),"_parcel3 <- ifelse(
+                           apply(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h],",",items_end[h],"),i)],1,function(x){all(is.na(x))}),
+                           NA,
+                           rowSums(quop_use[,paste0(\"",scales[h],"Korrekt\",seq(",items_start[h]+2,",",items_end[h],",by=3),i)],na.rm=T))")))
+  }
+}
+
+#Make NaNs to NA (Where are they coming from???)
+#is.nan() behaves differently than is.na() for dataframes but for a matrix, it works just like is.na() does for dataframes
+elfe_parcels[is.nan(as.matrix(elfe_parcels))] <- NA
+
+#Get rid of all sujects who only took part in quop but not in elfe
+elfe_parcels <- elfe_parcels[apply(elfe_parcels[,-c(1:2)],1,function(x)!all(is.na(x))),]
+```
+
+Then, merge the elfe parcels into the dataframe holding the quop scores, quop parcels, standardized test scores and teacher jdugments.
+
+```{r merge elfe parcels, warning = FALSE, message = FALSE}
+elfe_quop <- merge(elfe_quop, elfe_parcels, by=c("code","class"))
+```
+
+Extract datasets for each scale and rename the columns to be a bit more handy. (Also, only keep cases for which both ELFE tests (pre and post) have been completed. --> Not done right now, why lose information?)
+
+```{r dataset per scale change, warning = FALSE, message = FALSE}
+##Extract
+#word
+ch_val_wort <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^w_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)elfe", colnames(elfe_quop))])]
+
+#sentence
+ch_val_satz <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^s_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)elfe", colnames(elfe_quop))])]
+
+#text
+ch_val_text <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^t_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)elfe", colnames(elfe_quop))])]
+
+##Rename (MPlus only displays variable names up to 8 characters long)
+#Word
+names(ch_val_wort) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+#Sentence
+names(ch_val_satz) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+#Text
+names(ch_val_text) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+##Only keep cases where both elfe tests have been completed (if one test has not been completed, there are 3 parcels (== 1 test) missing)
+#Word
+ch_val_wort <- ch_val_wort[apply(ch_val_wort[,c(colnames(ch_val_wort)[grep("e[1-2]", colnames(ch_val_wort))])], 1, function(x)sum(is.na(x))<3),]
+
+#Sentence
+ch_val_satz <- ch_val_satz[apply(ch_val_satz[,c(colnames(ch_val_satz)[grep("e[1-2]", colnames(ch_val_satz))])], 1, function(x)sum(is.na(x))<3),]
+
+#Text
+ch_val_text <- ch_val_text[apply(ch_val_text[,c(colnames(ch_val_text)[grep("e[1-2]", colnames(ch_val_text))])], 1, function(x)sum(is.na(x))<3),]
+```
+
+Implement Change Validity Model: We ware interested in the correlation of the the latent slope estimated over all quop scores (testing points 1 to 8) and the latent difference between elfe pre and post scores.
+
+```{r change validity model, warning = FALSE, message = FALSE}
+ch_val_model <- '
+                ##LATENT CHANGE MODEL: ELFE
+                #LV for elfe pre and post
+                #Same loadings for 2nd/3rd parcel between time points
+                #Loadings for the 1st parcel per time point are restricted to 1 by default for
+                #model identification
+                ELFE_pre =~ e1_p1 + a*e1_p2 + b*e1_p3
+                ELFE_post =~ e2_p1 + a*e2_p2 + b*e2_p3
+
+                #We need to introduce the LV of the difference which is not measured by an 
+                #indicator. So define it by make any indicator load on it with 0
+                D_ELFE =~ 0*e1_p1
+      
+                #Perfect regression: LV ELFE_post is made up of the sum of ELFE_pre and 
+                #the difference, with no error
+                ELFE_post ~ 1*ELFE_pre + 1*D_ELFE
+                ELFE_post ~~ 0*ELFE_post
+      
+                #Mean structure: Restrict intercepts of both first parcels to 0, freely 
+                #estimate the means of ELFE_pre and the difference
+                #e1_p1 ~ 0*1
+                #e2_p1 ~ 0*1
+                #ELFE_pre ~ 1
+                #D_ELFE ~ 1
+      
+                #Mean structure: Restrict the intercepts of the other parcels to the same value
+                #over measurements, too (although not necessarily to 0)
+                #e1_p1 ~ f*1
+                #e2_p1 ~ f*1
+                #e1_p2 ~ c*1
+                #e2_p2 ~ c*1
+                #e1_p3 ~ d*1
+                #e2_p3 ~ d*1
+      
+                #allow indicator-specific covariances between the same parcel over measurements
+                #(errors covary)
+                e1_p1 ~~ e2_p1
+                e1_p2 ~~ e2_p2
+                e1_p3 ~~ e2_p3
+        
+      
+                ##LATENT GROWTH MODEL: QUOP
+                #LV intercept on which all indicators loadings are 1
+                intercept =~ 1*q1 + 1*q2 + 1*q3 + 1*q4
+                           + 1*q5 + 1*q6 + 1*q7 + 1*q8
+
+                #LV slope with linearly increasing loadings
+                      slope =~ 0*q1 + 1*q2 + 2*q3 + 3*q4
+                             + 4*q5 + 5*q6 + 6*q7 + 7*q8
+
+                #Mean Structure
+                #We are only interested in the means of the LV, so restrict the first two indicators intercepts to 0
+                #to be able to estimate the LV means
+                #q1 ~ 0*1
+                #q2 ~ 0*1
+                #intercept ~ 1
+                #slope ~ 1
+      
+                #the parameter we are ultimately interested into
+                D_ELFE ~~ slope
+                '
+```
+
+Estimate Model per scale.
+
+**Word**
+
+```{r estimate word model change, warning = FALSE, message = FALSE}
+ch_val_wort.fit <- cfa(ch_val_model, data=ch_val_wort, estimator="mlr", missing="fiml")
+summary(ch_val_wort.fit, std=T, fit.measures=T)
+```
+
+**Sentence**
+
+```{r estimate sentence model change, warning = FALSE, message = FALSE}
+ch_val_satz.fit <- cfa(ch_val_model, data=ch_val_satz, estimator="mlr", missing="fiml")
+summary(ch_val_satz.fit, std=T, fit.measures=T)
+```
+
+**Text**
+
+```{r estimate text model change, warning = FALSE, message = FALSE}
+ch_val_text.fit <- cfa(ch_val_model, data=ch_val_text, estimator="mlr", missing="fiml")
+summary(ch_val_text.fit, std=T, fit.measures=T)
+```
+
+##10.3 Predictive Validity
+
+Indicator 1: Influence of intercept and slope of a linear growth model estimated over all quop scores (testing points 1 to 8) on elfe post scores, incremental to explaining the elfe post scores with the elfe pre scores.
+
+**ADD PICTURE OF MODEL**
+
+Indicator 2: Influence of intercept and slope of a linear growth model estimated over quop scores (testing points 2 to 7) on quop testing point 8 scores, incremental to explaining the quop testing point 8 scores with the quop testing point 1 scores.
+
+**ADD PICTURE OF MODEL**
+
+###10.3.1 Indicator 1
+
+Implement Predictive Validity Model: We are interested in the influence of the latent intercept and slope estimated over all quop scores (testing points 1 to 8) on elfe post scores incremental to elfe pre scores.
+
+**LIKE IN MPLUS**: Intercepts of quop indicators are restricted to 0 and means for slope and intercept are estimated. Why?
+
+Also: For sentence scale, weird results without providing starting values for the regression from MPLUS.
+
+Without the MPLUS-default restrictions of the quop indicators and estimating the means (so without doing anything about the mean structure), the model does not converge on word level, but the result pattern on sentence and text level is the same. Also in MPLUS, no convergence on word scale in this case.
+
+**WITHOUT missing="fiml"**: All models work (but for change validity withput fiml: no longer significance on texd level)
+
+**ToDo**: 
+
+1. Why does MPLUS have these defaults? Models with or without them?
+2. If without them, why no convergence on word level?
+3. If with them, why weird results on sentence scale without providing starting values?
+
+**UPDATE**: When only using cases for which both elfe tests have been completed, using the MPLUS defaults or not makes no difference anymore. But, now in both cases, there are weird values on sentence level. In MPLUS (with its defaults), there are no weird results on sentence level.
+Again, in this case, without missing="fiml", no signifiance of change validity model on text level anymore, but no weird results for the predictive validity on text level, either.
+
+**UPDATED ToDo**:
+1. Get lavaan to estimate proper results on sentence level, like MPLUS does (without using any mean structure).
+
+```{r predictive validity model indicator 1, warning = FALSE, message = FALSE}
+pr_val_ind1_model <- '
+                      ##LATENT CHANGE MODEL: ELFE
+                      #LV for elfe pre and post
+                      #Same loadings for 2nd/3rd parcel between time points
+                      #Loadings for the 1st parcel per time point are restricted to 1 by default for
+                      #model identification
+                      ELFE_pre =~ e1_p1 + a*e1_p2 + b*e1_p3
+                      ELFE_post =~ e2_p1 + a*e2_p2 + b*e2_p3
+
+                      #allow indicator-specific covariances between the same parcel over measurements
+                      #(errors covary)
+                      e1_p1 ~~ e2_p1
+                      e1_p2 ~~ e2_p2
+                      e1_p3 ~~ e2_p3
+
+                      ##LATENT GROWTH MODEL: QUOP
+                      #LV intercept on which all indicators loadings are 1
+                      inter =~ 1*q1 + 1*q2 + 1*q3 + 1*q4
+                                 + 1*q5 + 1*q6 + 1*q7 + 1*q8
+      
+                      #LV slope with linearly increasing loadings
+                            slope =~ 0*q1 + 1*q2 + 2*q3 + 3*q4
+                                   + 4*q5 + 5*q6 + 6*q7 + 7*q8
+                      
+                      #MPLUS defaults
+                      #q1 ~ 0*1
+                      #q2 ~ 0*1
+                      #q3 ~ 0*1
+                      #q4 ~ 0*1
+                      #q5 ~ 0*1
+                      #q6 ~ 0*1
+                      #q7 ~ 0*1
+                      #q8 ~ 0*1
+                      #inter ~ 1
+                      #slope ~ 1
+
+                      #Predictive Validity
+                      ELFE_post ~ ELFE_pre + inter + slope
+                      
+                      #Starting values for word scale when NOT using MPLUS defaults
+                      #ELFE_post ~ start(0.6)*ELFE_pre + start(0.88)*inter + start(0.14)*slope
+
+                      #Starting values for sentence scale when using MPLUS defaults
+                      #ELFE_post ~ start(0.7)*ELFE_pre + start(0.8)*inter + start(0.07)*slope
+                     '
+```
+
+Estimate Model per Scale.
+
+**Word**
+
+```{r estimate word model predicitve ind1, warning = FALSE, message = FALSE}
+pr_val_ind1_wort.fit <- cfa(pr_val_ind1_model, data=ch_val_wort, estimator="mlr", missing="fiml")
+summary(pr_val_ind1_wort.fit, std=T, fit.measures=T)
+```
+
+**Sentence**
+
+```{r estimate sentence model predictive ind1, warning = FALSE, message = FALSE}
+pr_val_ind1_satz.fit <- cfa(pr_val_ind1_model, data=ch_val_satz, estimator="mlr", missing="fiml")
+summary(pr_val_ind1_satz.fit, std=T, fit.measures=T)
+```
+
+**Text**
+
+```{r estimate text model predictive ind1, warning = FALSE, message = FALSE}
+pr_val_ind1_text.fit <- cfa(pr_val_ind1_model, data=ch_val_text, estimator="mlr", missing="fiml")
+summary(pr_val_ind1_text.fit, std=T, fit.measures=T)
+```
+
+###10.3.2 Indicator 2
+
+AS we only use quop scores here, we can estimate the models based on the whole sample and not just the subsample having completed the standardized tests.
+
+Extract datasets for each scale and rename the columns to be a bit more handy.
+
+```{r dataset per scale predictive, warning = FALSE, message = FALSE}
+##Extract
+#Word
+pr_val_wort <- quop_use[c("code","class", colnames(quop_use)[grep("(^w_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^w_)(t1|t8)_parcel", colnames(quop_use))])]
+
+#Sentence
+pr_val_satz <- quop_use[c("code","class", colnames(quop_use)[grep("(^s_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^s_)(t1|t8)_parcel", colnames(quop_use))])]
+
+#Text
+pr_val_text <- quop_use[c("code","class", colnames(quop_use)[grep("(^t_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^t_)(t1|t8)_parcel", colnames(quop_use))])]
+
+##Rename (MPlus only displays variable names up to 8 characters long)
+#Word
+names(pr_val_wort) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+
+#Sentence
+names(pr_val_satz) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+
+#Text
+names(pr_val_text) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+```
+
+Implement Predictive Validity Model: We are interested in the influence of the latent intercept and slope estimated over quop scores (testing points 2 to 7) on quop testing point 8 scores incremental to quop testing point 1 scores.
+
+```{r predictive validity model indicator 2, warning = FALSE, message = FALSE}
+pr_val_ind2_model <- '
+                      quop1 =~ q1_p1 + q1_p2 + q1_p3
+                      quop8 =~ q8_p1 + q8_p2 + q8_p3
+
+                      intercept =~ 1*q2 + 1*q3 + 1*q4
+                                 + 1*q5 + 1*q6 + 1*q7
+
+                      slope =~ 0*q2 + 1*q3 + 2*q4
+                             + 3*q5 + 4*q6 + 5*q7
+
+                      quop8 ~ quop1 + intercept + slope
+                     '
+```
+
+Estimate Model per Scale.
+
+**Word**
+
+```{r estimate word model predicitve ind2, warning = FALSE, message = FALSE}
+pr_val_ind2_wort.fit <- cfa(pr_val_ind2_model, data=pr_val_wort, estimator="mlr")
+#summary(pr_val_ind2_wort.fit, std=T, fit.measures=T)
+```
+
+**Sentence**
+
+```{r estimate sentence model predictive ind2, warning = FALSE, message = FALSE}
+pr_val_ind2_satz.fit <- cfa(pr_val_ind2_model, data=pr_val_satz, estimator="mlr")
+#summary(pr_val_ind2_satz.fit, std=T, fit.measures=T)
+```
+
+**Text**
+
+```{r estimate text model predictive ind2, warning = FALSE, message = FALSE}
+pr_val_ind2_text.fit <- cfa(pr_val_ind2_model, data=pr_val_text, estimator="mlr")
+#summary(pr_val_ind2_text.fit, std=T, fit.measures=T)
+```
+
+#11. MPLUS Datasets 
+
+At the moment, the models are estimated in MPLUS. Here, the data is prepared accodingly.
+
+From the subsample dataframe, build an MPLUS dataset containing all variables needed in the correct format (Validity of Change Measurement and Predictive Validity Indicator 1).
+
+Relevant Variables are elfe parcels, quop scores and quop parcels t1&t8 (elfe subsample).
+
+Format requirements: 
+
+* No variable names in the dataset to be read into MPLUS
+
+* When naming the variables inside the MPLUS script, they may only be up to 8 characters long
+
+```{r elfe subsample for mplus, warning = FALSE, message = FALSE}
+##Extract
+#word
+#elfe_quop_wort_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^w_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)elfe", colnames(elfe_quop))])]
+
+#sentence
+#elfe_quop_satz_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^s_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)elfe", colnames(elfe_quop))])]
+
+#text
+#elfe_quop_text_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^t_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)elfe", colnames(elfe_quop))])]
+
+##Rename (MPlus only displays variable names up to 8 characters long)
+#Word
+#names(elfe_quop_wort_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+#Sentence
+#names(elfe_quop_satz_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+#Text
+#names(elfe_quop_text_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
+
+elfe_quop_wort_mplus <- ch_val_wort
+elfe_quop_satz_mplus <- ch_val_satz
+elfe_quop_text_mplus <- ch_val_text
+
+##Export
+#Word
+elfe_quop_wort_mplus[is.na(elfe_quop_wort_mplus)] <- -99
+write.table(elfe_quop_wort_mplus,"elfe_quop_wort_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(elfe_quop_wort_mplus,"elfe_quop_wort_mplus_var_names.txt",sep=",") #export with variable names
+
+#Sentence
+elfe_quop_satz_mplus[is.na(elfe_quop_satz_mplus)] <- -99
+write.table(elfe_quop_satz_mplus,"elfe_quop_satz_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(elfe_quop_satz_mplus,"elfe_quop_satz_mplus_var_names.txt",sep=",") #export with variable names
+
+#Text
+elfe_quop_text_mplus[is.na(elfe_quop_text_mplus)] <- -99
+write.table(elfe_quop_text_mplus,"elfe_quop_text_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(elfe_quop_text_mplus,"elfe_quop_text_mplus_var_names.txt",sep=",") #export with variable names
+
+```
+
+Build an MPLUS dataset from all quop data containing all variables needed in the correct format (Predictive Validity Indicator 2).
+
+Relevant Variables are quop scores and quop parcels t1&t8 (all subjects).
+
+```{r quop wholesample mplus, warning = FALSE, message = FALSE}
+##Extract
+#Word
+quop_wort_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^w_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^w_)(t1|t8)_parcel", colnames(quop_use))])]
+
+#Sentence
+quop_satz_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^s_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^s_)(t1|t8)_parcel", colnames(quop_use))])]
+
+#Text
+quop_text_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^t_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^t_)(t1|t8)_parcel", colnames(quop_use))])]
+
+##Rename (MPlus only displays variable names up to 8 characters long)
+#Word
+names(quop_wort_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+
+#Sentence
+names(quop_satz_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+
+#Text
+names(quop_text_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
+
+##Export
+#Word
+quop_wort_mplus[is.na(quop_wort_mplus)] <- -99
+write.table(quop_wort_mplus,"quop_wort_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(quop_wort_mplus,"quop_wort_mplus_var_names.txt",sep=",") #export with variable names
+
+#Sentence
+quop_satz_mplus[is.na(quop_satz_mplus)] <- -99
+write.table(quop_satz_mplus,"quop_satz_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(quop_satz_mplus,"quop_satz_mplus_var_names.txt",sep=",") #export with variable names
+
+#Text
+quop_text_mplus[is.na(quop_text_mplus)] <- -99
+write.table(quop_text_mplus,"quop_text_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
+write.table(quop_text_mplus,"quop_text_mplus_var_names.txt",sep=",") #export with variable names
+```
+
+The models described in 10.2 and 10.3 are estimated in MPLUS.
