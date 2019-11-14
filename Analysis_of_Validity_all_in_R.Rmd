@@ -311,7 +311,7 @@ for(i in time_pts){
 
 Calculation formula: 
 
-$\mathbf{CISRT} = correct * (1 - \frac{latency}{bound_{upper}}) * 100)$ 
+$\mathbf{CISRT} = correct * (1 - \frac{latency-bound_{lower}}{bound_{upper}-bound_{lower}}) * 100)$ 
 
 with correct either resolving to 0 or 1.
 
