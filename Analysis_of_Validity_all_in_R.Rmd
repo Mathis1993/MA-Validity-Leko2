@@ -1083,15 +1083,9 @@ summary(ch_val_text.fit, std=T, fit.measures=T)
 
 ##9.3 Predictive Validity
 
-Indicator 1: Influence of intercept and slope of a linear growth model estimated over all quop scores (testing points 1 to 8) on elfe post scores, incremental to explaining the elfe post scores with the elfe pre scores.
+Influence of intercept and slope of a linear growth model estimated over all quop scores (testing points 1 to 8) on elfe post scores, incremental to explaining the elfe post scores with the elfe pre scores.
 
 **ADD PICTURE OF MODEL**
-
-Indicator 2: Influence of intercept and slope of a linear growth model estimated over quop scores (testing points 2 to 7) on quop testing point 8 scores, incremental to explaining the quop testing point 8 scores with the quop testing point 1 scores.
-
-**ADD PICTURE OF MODEL**
-
-###10.3.1 Indicator 1
 
 Implement Predictive Validity Model: We are interested in the influence of the latent intercept and slope estimated over all quop scores (testing points 1 to 8) on elfe post scores incremental to elfe pre scores.
 
