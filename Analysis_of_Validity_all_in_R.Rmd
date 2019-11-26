@@ -392,17 +392,7 @@ elfe_quop <- merge(quop_use[c("code","class",colnames(quop_use)[grep("(^w_|^s_|^
 
 Now, we have one dataset with the quop data for all sujects, and one dataset with the quop data, standardized test data and teacher judgments for the subsample. 
 
-#8. Guessing Correction
-
-**???**
-
-```{r guessing correction, warning = FALSE, message = FALSE}
-#elfe_quop$w_cisrt_t1 <- ifelse(elfe_quop$w_rcp_t1<=50, NA, elfe_quop$w_cisrt_t1)
-#elfe_quop$s_cisrt_t1 <- ifelse(elfe_quop$s_rcp_t1<=50, NA, elfe_quop$s_cisrt_t1)
-#elfe_quop$t_cisrt_t1 <- ifelse(elfe_quop$t_rcp_t1<=50, NA, elfe_quop$t_cisrt_t1)
-```
-
-#9. Reliability of the Quop Tests
+#8. Reliability of the Quop Tests
 
 **Retest-Reliability** of sucessive tests per scale.
 
@@ -461,7 +451,7 @@ row.names(split_half_rel) <- c(paste0("t",seq(1,8)))
 (split_half_rel_f <- formattable(split_half_rel))
 ```
 
-#10. Validity Analyses
+#9. Validity Analyses
 
 We have three research questions:
 
@@ -471,9 +461,9 @@ We have three research questions:
 2. Validity of Change Measurement: Does the change in test scores over time reflect the change in the targeted competence?
 3. Predictive Validity: Is the change in test scores over time predictive of the final level of the targeted competence beyond a baseline performance (In other words: Are we gaining information by measuring the targeted competence multiple times (thereby estimating change) as opposed to measuring the targeted competence only once?)?
 
-##10.1 Status Validity
+##9.1 Status Validity
 
-###10.1.1 Factorial Validity
+###9.1.1 Factorial Validity
 
 Confirmatory Factory Analyses (CFAs) for each testing point to verify the assumed model structure. We assume that the item scores for each scale capture an individual latent variable (although the three latent variables representing word, sentence and text scale are intercorrelated). The CFAs are estimated with three item parcels per scale. The parcels are built by counterbalancing item positions. This means that for each scale, the first item goes into the first parcel, the second item goes into the second parcel, the third item into the third parcel, the fourth item again into the first parcel and so on:
 
@@ -564,7 +554,7 @@ range_fit_indices <- round(range_fit_indices,3)
 (range_fit_indices_f <- formattable(as.data.frame(range_fit_indices)))
 ```
 
-###10.1.2 Discrimant Status Validity
+###9.1.2 Discrimant Status Validity
 
 Indicator: Correlation of overall quop scores t1 with demat (mathematics) and cft (intelligence) standardized test scores.
 
@@ -617,7 +607,7 @@ row.names(discriminant) <- c(paste0("t",seq(1,8)))
 * Median correlation of overall quop scores with **DEMAT (MATHEMATICS)**: **`r median(discriminant$Mathematics)`**
 * Range of correlations: **`r range(discriminant$Mathematics)`**
 
-####10.1.2.1 Attenuated Discriminant Status Validity
+####9.1.2.1 Attenuated Discriminant Status Validity
 
 **ECHTE DEMAT/CFT REL. EINFÜGEN**
 
@@ -646,7 +636,7 @@ divergent_a$Mathematics <- round(divergent_a$Mathematics,2)
 ```
 
 
-###10.1.3 Convergent Status Validity
+###9.1.3 Convergent Status Validity
 
 Indicator: Correlation of quop scores per scale with elfe (reading) scores per scale.
 
@@ -754,7 +744,7 @@ row.names(convergent_t) <- c(paste0("t",seq(1,8)))
     + Range of correlations: **`r range(convergent_t$ELFE_post)`**
 
 
-####10.1.3.1 Attenuated Convergent Status Validity
+####9.1.3.1 Attenuated Convergent Status Validity
 
 As reliability is not perfect, estimate convergent correlations as they would be when having perfect reliability.
 
@@ -801,7 +791,7 @@ convergent_attenuated$ELFE_Post <- round(convergent_attenuated$ELFE_Post,2)
 (convergent_attenuated_f <- formattable(convergent_attenuated))
 ```
 
-###10.1.4 Criterial Status Validity
+###9.1.4 Criterial Status Validity
 
 We have a rating (1-7) and a criterial judgment (how many words can a suject read in 2 min) from a teacher for each subject. The correlation between quop scores for each scale and the ratings/judgments is used as an indicator for criterial validity.
 
@@ -916,7 +906,7 @@ row.names(criterial_t) <- c(paste0("t",seq(1,8)))
     + Range of correlations: **`r range(criterial_t$Teacher_Rating_Criterial)`**
     
     
-##10.2 Validity of Change Measurement
+##9.2 Validity of Change Measurement
 
 Indicator: Correlation of the slope of a linear growth model estimated over all quop scores (testing points 1 to 8) with the latent difference between elfe pre and post scores of a Latent Change Model.
 
@@ -1091,7 +1081,7 @@ ch_val_text.fit <- cfa(ch_val_model, data=ch_val_text, estimator="mlr", missing=
 summary(ch_val_text.fit, std=T, fit.measures=T)
 ```
 
-##10.3 Predictive Validity
+##9.3 Predictive Validity
 
 Indicator 1: Influence of intercept and slope of a linear growth model estimated over all quop scores (testing points 1 to 8) on elfe post scores, incremental to explaining the elfe post scores with the elfe pre scores.
 
@@ -1266,103 +1256,3 @@ pr_val_ind2_text.fit <- cfa(pr_val_ind2_model, data=pr_val_text, estimator="mlr"
 #summary(pr_val_ind2_text.fit, std=T, fit.measures=T)
 ```
 
-#11. MPLUS Datasets 
-
-At the moment, the models are estimated in MPLUS. Here, the data is prepared accodingly.
-
-From the subsample dataframe, build an MPLUS dataset containing all variables needed in the correct format (Validity of Change Measurement and Predictive Validity Indicator 1).
-
-Relevant Variables are elfe parcels, quop scores and quop parcels t1&t8 (elfe subsample).
-
-Format requirements: 
-
-* No variable names in the dataset to be read into MPLUS
-
-* When naming the variables inside the MPLUS script, they may only be up to 8 characters long
-
-```{r elfe subsample for mplus, warning = FALSE, message = FALSE}
-##Extract
-#word
-#elfe_quop_wort_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^w_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^w_)elfe", colnames(elfe_quop))])]
-
-#sentence
-#elfe_quop_satz_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^s_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^s_)elfe", colnames(elfe_quop))])]
-
-#text
-#elfe_quop_text_mplus <- elfe_quop[c("code","class", colnames(elfe_quop)[grep("(^t_)cisrt", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)(t1|t8)_parcel", colnames(elfe_quop))], colnames(elfe_quop)[grep("(^t_)elfe", colnames(elfe_quop))])]
-
-##Rename (MPlus only displays variable names up to 8 characters long)
-#Word
-#names(elfe_quop_wort_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
-
-#Sentence
-#names(elfe_quop_satz_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
-
-#Text
-#names(elfe_quop_text_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)), paste0("e",rep(1:2,each=3),"_p",rep(1:3,times=2)))
-
-elfe_quop_wort_mplus <- ch_val_wort
-elfe_quop_satz_mplus <- ch_val_satz
-elfe_quop_text_mplus <- ch_val_text
-
-##Export
-#Word
-elfe_quop_wort_mplus[is.na(elfe_quop_wort_mplus)] <- -99
-write.table(elfe_quop_wort_mplus,"elfe_quop_wort_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(elfe_quop_wort_mplus,"elfe_quop_wort_mplus_var_names.txt",sep=",") #export with variable names
-
-#Sentence
-elfe_quop_satz_mplus[is.na(elfe_quop_satz_mplus)] <- -99
-write.table(elfe_quop_satz_mplus,"elfe_quop_satz_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(elfe_quop_satz_mplus,"elfe_quop_satz_mplus_var_names.txt",sep=",") #export with variable names
-
-#Text
-elfe_quop_text_mplus[is.na(elfe_quop_text_mplus)] <- -99
-write.table(elfe_quop_text_mplus,"elfe_quop_text_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(elfe_quop_text_mplus,"elfe_quop_text_mplus_var_names.txt",sep=",") #export with variable names
-
-```
-
-Build an MPLUS dataset from all quop data containing all variables needed in the correct format (Predictive Validity Indicator 2).
-
-Relevant Variables are quop scores and quop parcels t1&t8 (all subjects).
-
-```{r quop wholesample mplus, warning = FALSE, message = FALSE}
-##Extract
-#Word
-quop_wort_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^w_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^w_)(t1|t8)_parcel", colnames(quop_use))])]
-
-#Sentence
-quop_satz_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^s_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^s_)(t1|t8)_parcel", colnames(quop_use))])]
-
-#Text
-quop_text_mplus <- quop_use[c("code","class", colnames(quop_use)[grep("(^t_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^t_)(t1|t8)_parcel", colnames(quop_use))])]
-
-##Rename (MPlus only displays variable names up to 8 characters long)
-#Word
-names(quop_wort_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-
-#Sentence
-names(quop_satz_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-
-#Text
-names(quop_text_mplus) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-
-##Export
-#Word
-quop_wort_mplus[is.na(quop_wort_mplus)] <- -99
-write.table(quop_wort_mplus,"quop_wort_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(quop_wort_mplus,"quop_wort_mplus_var_names.txt",sep=",") #export with variable names
-
-#Sentence
-quop_satz_mplus[is.na(quop_satz_mplus)] <- -99
-write.table(quop_satz_mplus,"quop_satz_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(quop_satz_mplus,"quop_satz_mplus_var_names.txt",sep=",") #export with variable names
-
-#Text
-quop_text_mplus[is.na(quop_text_mplus)] <- -99
-write.table(quop_text_mplus,"quop_text_mplus.dat",sep=",",row.names=FALSE, col.names=FALSE)
-write.table(quop_text_mplus,"quop_text_mplus_var_names.txt",sep=",") #export with variable names
-```
-
-The models described in 10.2 and 10.3 are estimated in MPLUS.
