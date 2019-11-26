@@ -1,5 +1,7 @@
 ---
 title: "Analysis of Validity"
+author: "Mathis Erichsen"
+date: "`r format(Sys.time(), '%d. %B %Y')`"
 output:
   html_document:
     df_print: paged
