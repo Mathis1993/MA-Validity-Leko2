@@ -958,7 +958,11 @@ Then, merge the elfe parcels into the dataframe holding the quop scores, quop pa
 elfe_quop <- merge(elfe_quop, elfe_parcels, by=c("code","class"))
 ```
 
-Extract datasets for each scale and rename the columns to be a bit more handy. (Also, only keep cases for which both ELFE tests (pre and post) have been completed. --> Not done right now, why lose information?)
+Extract datasets for each scale and rename the columns to be a bit more handy. (Also, only keep cases for which both ELFE tests (pre and post) have been completed.
+
+**Because lavaan tends to get difficulties when variance and covariance estimates are numerically high, divide cisrt scores by 100**.
+
+**To Do**: Remove quop parcels (They are not used anymore, are they?)
 
 ```{r dataset per scale change, warning = FALSE, message = FALSE}
 ##Extract
@@ -990,6 +994,16 @@ ch_val_satz <- ch_val_satz[apply(ch_val_satz[,c(colnames(ch_val_satz)[grep("e[1-
 
 #Text
 ch_val_text <- ch_val_text[apply(ch_val_text[,c(colnames(ch_val_text)[grep("e[1-2]", colnames(ch_val_text))])], 1, function(x)sum(is.na(x))<3),]
+
+##Divide by 100
+#Word
+ch_val_wort[, c(paste0("q",seq(1,8)))] <- ch_val_wort[, c(paste0("q",seq(1,8)))] / 100
+
+#Sentence
+ch_val_satz[, c(paste0("q",seq(1,8)))] <- ch_val_satz[, c(paste0("q",seq(1,8)))] / 100
+
+#Text
+ch_val_text[, c(paste0("q",seq(1,8)))] <- ch_val_text[, c(paste0("q",seq(1,8)))] / 100
 ```
 
 Implement Change Validity Model: We ware interested in the correlation of the the latent slope estimated over all quop scores (testing points 1 to 8) and the latent difference between elfe pre and post scores.
@@ -1013,22 +1027,6 @@ ch_val_model <- '
                 ELFE_post ~ 1*ELFE_pre + 1*D_ELFE
                 ELFE_post ~~ 0*ELFE_post
       
-                #Mean structure: Restrict intercepts of both first parcels to 0, freely 
-                #estimate the means of ELFE_pre and the difference
-                #e1_p1 ~ 0*1
-                #e2_p1 ~ 0*1
-                #ELFE_pre ~ 1
-                #D_ELFE ~ 1
-      
-                #Mean structure: Restrict the intercepts of the other parcels to the same value
-                #over measurements, too (although not necessarily to 0)
-                #e1_p1 ~ f*1
-                #e2_p1 ~ f*1
-                #e1_p2 ~ c*1
-                #e2_p2 ~ c*1
-                #e1_p3 ~ d*1
-                #e2_p3 ~ d*1
-      
                 #allow indicator-specific covariances between the same parcel over measurements
                 #(errors covary)
                 e1_p1 ~~ e2_p1
@@ -1044,14 +1042,6 @@ ch_val_model <- '
                 #LV slope with linearly increasing loadings
                       slope =~ 0*q1 + 1*q2 + 2*q3 + 3*q4
                              + 4*q5 + 5*q6 + 6*q7 + 7*q8
-
-                #Mean Structure
-                #We are only interested in the means of the LV, so restrict the first two indicators intercepts to 0
-                #to be able to estimate the LV means
-                #q1 ~ 0*1
-                #q2 ~ 0*1
-                #intercept ~ 1
-                #slope ~ 1
       
                 #the parameter we are ultimately interested into
                 D_ELFE ~~ slope
@@ -1089,28 +1079,6 @@ Influence of intercept and slope of a linear growth model estimated over all quo
 
 Implement Predictive Validity Model: We are interested in the influence of the latent intercept and slope estimated over all quop scores (testing points 1 to 8) on elfe post scores incremental to elfe pre scores.
 
-**LIKE IN MPLUS**: Intercepts of quop indicators are restricted to 0 and means for slope and intercept are estimated. Why?
-
-Also: For sentence scale, weird results without providing starting values for the regression from MPLUS.
-
-Without the MPLUS-default restrictions of the quop indicators and estimating the means (so without doing anything about the mean structure), the model does not converge on word level, but the result pattern on sentence and text level is the same. Also in MPLUS, no convergence on word scale in this case.
-
-**WITHOUT missing="fiml"**: All models work (but for change validity withput fiml: no longer significance on texd level)
-
-**ToDo**: 
-
-1. Why does MPLUS have these defaults? Models with or without them?
-2. If without them, why no convergence on word level?
-3. If with them, why weird results on sentence scale without providing starting values?
-
-**UPDATE**: When only using cases for which both elfe tests have been completed, using the MPLUS defaults or not makes no difference anymore. But, now in both cases, there are weird values on sentence level. In MPLUS (with its defaults), there are no weird results on sentence level.
-Again, in this case, without missing="fiml", no signifiance of change validity model on text level anymore, but no weird results for the predictive validity on text level, either.
-
-**UPDATED ToDo**:
-1. Get lavaan to estimate proper results on sentence level, like MPLUS does (without using any mean structure).
-
-**UPDATE 061119**: With changed CISRT (also use lower bound, word and sentence scale make problems. With the starting values below, everything is fine (no mean structure)).
-
 ```{r predictive validity model indicator 1, warning = FALSE, message = FALSE}
 pr_val_ind1_model <- '
                       ##LATENT CHANGE MODEL: ELFE
@@ -1135,27 +1103,9 @@ pr_val_ind1_model <- '
                       #LV slope with linearly increasing loadings
                             slope =~ 0*q1 + 1*q2 + 2*q3 + 3*q4
                                    + 4*q5 + 5*q6 + 6*q7 + 7*q8
-                      
-                      #MPLUS defaults
-                      #q1 ~ 0*1
-                      #q2 ~ 0*1
-                      #q3 ~ 0*1
-                      #q4 ~ 0*1
-                      #q5 ~ 0*1
-                      #q6 ~ 0*1
-                      #q7 ~ 0*1
-                      #q8 ~ 0*1
-                      #inter ~ 1
-                      #slope ~ 1
 
                       #Predictive Validity
-                      #ELFE_post ~ ELFE_pre + inter + slope
-                      
-                      #Starting values for word scale 
-                      #ELFE_post ~ start(0.6)*ELFE_pre + start(0.88)*inter + start(0.14)*slope
-
-                      #Starting values for sentence scale
-                      #ELFE_post ~ start(0.7)*ELFE_pre + start(0.8)*inter + start(0.07)*slope
+                      ELFE_post ~ ELFE_pre + inter + slope
                      '
 ```
 
@@ -1180,73 +1130,5 @@ summary(pr_val_ind1_satz.fit, std=T, fit.measures=T)
 ```{r estimate text model predictive ind1, warning = FALSE, message = FALSE}
 pr_val_ind1_text.fit <- cfa(pr_val_ind1_model, data=ch_val_text, estimator="mlr", missing="fiml")
 summary(pr_val_ind1_text.fit, std=T, fit.measures=T)
-```
-
-###10.3.2 Indicator 2
-
-AS we only use quop scores here, we can estimate the models based on the whole sample and not just the subsample having completed the standardized tests.
-
-Extract datasets for each scale and rename the columns to be a bit more handy.
-
-```{r dataset per scale predictive, warning = FALSE, message = FALSE}
-##Extract
-#Word
-pr_val_wort <- quop_use[c("code","class", colnames(quop_use)[grep("(^w_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^w_)(t1|t8)_parcel", colnames(quop_use))])]
-
-#Sentence
-pr_val_satz <- quop_use[c("code","class", colnames(quop_use)[grep("(^s_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^s_)(t1|t8)_parcel", colnames(quop_use))])]
-
-#Text
-pr_val_text <- quop_use[c("code","class", colnames(quop_use)[grep("(^t_)cisrt", colnames(quop_use))], colnames(quop_use)[grep("(^t_)(t1|t8)_parcel", colnames(quop_use))])]
-
-##Rename (MPlus only displays variable names up to 8 characters long)
-#Word
-names(pr_val_wort) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-
-#Sentence
-names(pr_val_satz) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-
-#Text
-names(pr_val_text) <- c("code", "class", paste0("q",seq(1,8)), paste0("q",rep(c(1,8),each=3),"_p",rep(1:3,times=2)))
-```
-
-Implement Predictive Validity Model: We are interested in the influence of the latent intercept and slope estimated over quop scores (testing points 2 to 7) on quop testing point 8 scores incremental to quop testing point 1 scores.
-
-```{r predictive validity model indicator 2, warning = FALSE, message = FALSE}
-pr_val_ind2_model <- '
-                      quop1 =~ q1_p1 + q1_p2 + q1_p3
-                      quop8 =~ q8_p1 + q8_p2 + q8_p3
-
-                      intercept =~ 1*q2 + 1*q3 + 1*q4
-                                 + 1*q5 + 1*q6 + 1*q7
-
-                      slope =~ 0*q2 + 1*q3 + 2*q4
-                             + 3*q5 + 4*q6 + 5*q7
-
-                      quop8 ~ quop1 + intercept + slope
-                     '
-```
-
-Estimate Model per Scale.
-
-**Word**
-
-```{r estimate word model predicitve ind2, warning = FALSE, message = FALSE}
-pr_val_ind2_wort.fit <- cfa(pr_val_ind2_model, data=pr_val_wort, estimator="mlr")
-#summary(pr_val_ind2_wort.fit, std=T, fit.measures=T)
-```
-
-**Sentence**
-
-```{r estimate sentence model predictive ind2, warning = FALSE, message = FALSE}
-pr_val_ind2_satz.fit <- cfa(pr_val_ind2_model, data=pr_val_satz, estimator="mlr")
-#summary(pr_val_ind2_satz.fit, std=T, fit.measures=T)
-```
-
-**Text**
-
-```{r estimate text model predictive ind2, warning = FALSE, message = FALSE}
-pr_val_ind2_text.fit <- cfa(pr_val_ind2_model, data=pr_val_text, estimator="mlr")
-#summary(pr_val_ind2_text.fit, std=T, fit.measures=T)
 ```
 
