@@ -594,6 +594,16 @@ subscales <- data.frame(w_quop=elfe_quop$w_cisrt_t1, s_quop=elfe_quop$s_cisrt_t1
 intercor <- cor(subscales, use="complete.obs")
 ```
 
+Correlations of all variables.
+As we have 8 time points and 3 levels for the quop tests alone, we will only use quop scores from the first time point and show correlations with the other variables.
+For the manuscript, 
+
+```{r descriptive statistics subsample correlations, warning = FALSE, message = FALSE}
+all_cor <- cor(elfe_quop[c("w_cisrt_t2", "s_cisrt_t2", "t_cisrt_t2", "w_rw_pre", "s_rw_pre", "t_rw_pre", "w_rw_post", "s_rw_post", "t_rw_post", "cft", "demat_rw", "tr_in_w", "tr_in_s", "tr_in_t", "tr_di_w", "tr_di_s", "tr_di_t")], use="complete.obs")
+all_cor <- round(as.data.frame(all_cor), 2)
+names(all_cor) <- c("quop_w", "quop_s", "quop_t", "elfe_w_pre", "elfe_s_pre", "elfe_t_pre", "elfe_w_post", "elfe_s_post", "elfe_t_post", "cft", "demat", "tr_di_w", "tr_di_s", "tr_di_t", "tr_cr_w", "tr_cr_s", "tr_cr_t")
+(all_cor_f <- formattable(all_cor))
+```
 ##8.2 Missing Data
 
 ##8.2.1 Total Sample
