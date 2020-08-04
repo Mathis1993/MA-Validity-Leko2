@@ -617,8 +617,7 @@ corstars <- function(x){
 ```
 
 
-As we have 8 time points and 3 levels for the quop tests alone, we will only use quop scores from the first time point and show correlations with the other variables.
-For the manuscript, 
+As we have 8 time points and 3 levels for the quop tests alone, we will exemplary only use quop scores from the second time point and show correlations with the other variables.
 
 ```{r descriptive statistics subsample correlations, warning = FALSE, message = FALSE}
 all_cor <- corstars(as.matrix(elfe_quop[c("w_cisrt_t2", "s_cisrt_t2", "t_cisrt_t2", "w_rw_pre", "s_rw_pre", "t_rw_pre", "w_rw_post", "s_rw_post", "t_rw_post", "cft", "demat_rw", "tr_in_w", "tr_in_s", "tr_in_t", "tr_di_w", "tr_di_s", "tr_di_t")]))
